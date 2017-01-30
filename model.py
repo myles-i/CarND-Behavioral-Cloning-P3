@@ -32,7 +32,7 @@ def grab_data(csv_data, index, camera):
     elif camera == 2: #right camera
         image= img_to_array(load_img(csv_data['right'][index].lstrip()))
         steering_cmd = csv_data['steering'][index] - shift_val # shift to simulate this as the center camer
-
+    
     return image,steering_cmd
 
 
@@ -41,10 +41,10 @@ def augment_data(image, steering_cmd):
     # randomly change brightness, randomly add shadows)
     
     image, AugImg_Values = da.augment_image(image, shear_range = (0,0), rot_range =(0,0),
-                                            vflip_prob = 0.5, hflip_prob = 0, add_shadow = True,
-                                            trans_range = (20,20), brightness_range = (0.25,1.5), return_rand_param = True)
+                                            vflip_prob = 0, hflip_prob = 0, add_shadow = False,
+                                            trans_range = (20,50), brightness_range = (1,1), return_rand_param = True)
     # now augment steering_cmd based on how image was augmented
-    steering_per_pixel = 0.004
+    steering_per_pixel = 0.002
     steering_cmd = steering_cmd + steering_per_pixel*AugImg_Values.translation_pixels[1]
     
     if AugImg_Values.vflipped:
@@ -55,20 +55,31 @@ def augment_data(image, steering_cmd):
 def my_train_datagen(csv_data,val_idxs, batch_size = 128):
     batch_X = np.zeros((batch_size,) + input_shape)
     batch_y = np.zeros(batch_size)
+    m = 1
     while True:
         for i in range(batch_size):
-            steering_cmd = 0 #initialize to greater than 0.1
-            while abs(steering_cmd)<0.1:
+            still_searching = True #initialize to less than 0.1
+            while still_searching:
                 #randomize which image is used, but not from validation set
                 random_index = np.random.randint(len(csv_data))
                 while val_idxs.__contains__(random_index):
                     random_index = np.random.randint(len(csv_data))
-
+                #random_index = 57
                 #randomize which camera to use
                 random_camera = np.random.randint(3)
+                #random_camera = 1
 
                 image, steering_cmd = grab_data(csv_data,random_index,random_camera)
-                image, steering_cmd = augment_data(image, steering_cmd) 
+                image, steering_cmd = augment_data(image, steering_cmd)
+                
+                #keep no steering angles at first, then start increasingly using them to train 
+                keep_prob = 0.5*(1- m)
+                m = m*0.9999653432415313 # 0.5^(1/20000)=0.9999653432415313 (halves every 20000 images)
+                small_steering_lim = 0.1
+                if abs(steering_cmd)>small_steering_lim or np.random.uniform()<keep_prob:
+                    still_searching = False
+
+                #print(steering_cmd)
 
 
             batch_X[i] = image
@@ -98,15 +109,15 @@ from keras.utils import np_utils
 from keras.optimizers import Adam
 
 #Define convolutional layer
-dropout = 0# percent that will dropout
+#dropout = 0# percent that will dropout
 
 
 model = Sequential()
-# model.add(Lambda( lambda x: x/255.0-0.5, input_shape=input_shape))
+model.add(Lambda( lambda x: x/255.0-0.5, input_shape=input_shape))
 ####Convolution Layer 
 model.add(Convolution2D(24, 5, 5,
 						subsample = (2,2),
-                        border_mode='valid', input_shape=input_shape))
+                        border_mode='valid'))
 #model.add(MaxPooling2D(pool_size=pool_size))
 # model.add(Dropout(dropout))
 model.add(Activation('relu'))
@@ -158,10 +169,10 @@ model.summary()
 
 
 
-# # conv_model = model
+# conv_model = model
 # model = Sequential()
-# model.add(Lambda( lambda x: x/255.0-0.5, input_shape=input_shape))
-# model.add(Flatten())
+# # model.add(Lambda( lambda x: x/255.0-0.5, input_shape=input_shape))
+# model.add(Flatten(input_shape=input_shape))
 # model.add(Dense(128))
 # model.add(Activation('relu'))
 # model.add(Dense(128))
@@ -174,8 +185,8 @@ print('Model Compiled...\n')
 # Train
 #########
 print('Training...')
-nb_epoch = 3
-samples_per_epoch = 10000
+nb_epoch = 4
+samples_per_epoch = 20000
 
 training_gen = my_train_datagen(csv_data,val_idx, batch_size = 128)
 validation_gen = my_validation_datagen(csv_data,val_idx, batch_size = 128)
