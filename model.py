@@ -22,7 +22,7 @@ val_idx = tuple(val_idx)
 # Define data generators and processors
 #######################
 def grab_data(csv_data, index, camera):
-    shift_val = 0.2
+    shift_val = 0.15
     if camera == 0: #left camera
         image= img_to_array(load_img(csv_data['left'][index].lstrip()))
         steering_cmd = csv_data['steering'][index] + shift_val# shift to simulate this as the center camera
@@ -42,9 +42,9 @@ def augment_data(image, steering_cmd):
     
     image, AugImg_Values = da.augment_image(image, shear_range = (0,0), rot_range =(0,0),
                                             vflip_prob = 1, hflip_prob = 0, add_shadow = False,
-                                            trans_range = (20,50), brightness_range = (0.25,1.5), return_rand_param = True)
+                                            trans_range = (20,50), brightness_range = (0.25,1.25), return_rand_param = True)
     # now augment steering_cmd based on how image was augmented
-    steering_per_pixel = 0.003
+    steering_per_pixel = 0.0015
     steering_cmd = steering_cmd + steering_per_pixel*AugImg_Values.translation_pixels[1]
     
     if AugImg_Values.vflipped:
@@ -58,7 +58,7 @@ def my_train_datagen(csv_data,val_idxs, batch_size = 128):
     m = 1
     while True:
         for i in range(batch_size):
-            still_searching = True #initialize to less than 0.1
+            still_searching = True 
             while still_searching:
                 #randomize which image is used, but not from validation set
                 random_index = np.random.randint(len(csv_data))
@@ -72,11 +72,10 @@ def my_train_datagen(csv_data,val_idxs, batch_size = 128):
                 image, steering_cmd = grab_data(csv_data,random_index,random_camera)
                 image, steering_cmd = augment_data(image, steering_cmd)
                 
-                #keep no steering angles at first, then start increasingly using them to train 
-                # keep_prob = 0.5*(1- m)
-                # m = m*0.9993070929904525 # 0.5^(1/10000)=0.9999653432415313 (halves every 10000 images)
-                keep_prob = 1
-                small_steering_lim = 0.1
+                #keep 0 low steering angles at first, then start increasingly using them to train 
+                keep_prob = 0.5*(1- m)
+                m = m*0.9993070929904525 # 0.5^(1/10000)=0.9999653432415313 (halves every 10000 images)
+                small_steering_lim = 0.05
                 if abs(steering_cmd)>small_steering_lim or np.random.uniform()<keep_prob:
                     still_searching = False
 
@@ -110,7 +109,7 @@ from keras.utils import np_utils
 from keras.optimizers import Adam
 
 #Define convolutional layer
-#dropout = 0# percent that will dropout
+# dropout = 0.5# percent that will dropout
 
 
 model = Sequential()
@@ -164,7 +163,7 @@ model.add(Activation('relu'))
 model.add(Dense(10))
 model.add(Activation('relu'))
 model.add(Dense(1))
-Adamoptimizer = Adam(lr=0.001)
+Adamoptimizer = Adam(lr=0.0005)
 model.compile(loss='mean_squared_error', optimizer=Adamoptimizer)
 model.summary()
 
@@ -186,7 +185,7 @@ print('Model Compiled...\n')
 # Train
 #########
 print('Training...')
-nb_epoch = 1
+nb_epoch = 4
 samples_per_epoch = 20000
 
 training_gen = my_train_datagen(csv_data,val_idx, batch_size = 128)
