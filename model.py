@@ -41,10 +41,10 @@ def augment_data(image, steering_cmd):
     # randomly change brightness, randomly add shadows)
     
     image, AugImg_Values = da.augment_image(image, shear_range = (0,0), rot_range =(0,0),
-                                            vflip_prob = 0, hflip_prob = 0, add_shadow = False,
-                                            trans_range = (20,50), brightness_range = (1,1), return_rand_param = True)
+                                            vflip_prob = 1, hflip_prob = 0, add_shadow = False,
+                                            trans_range = (20,50), brightness_range = (0.25,1.5), return_rand_param = True)
     # now augment steering_cmd based on how image was augmented
-    steering_per_pixel = 0.002
+    steering_per_pixel = 0.003
     steering_cmd = steering_cmd + steering_per_pixel*AugImg_Values.translation_pixels[1]
     
     if AugImg_Values.vflipped:
@@ -73,8 +73,9 @@ def my_train_datagen(csv_data,val_idxs, batch_size = 128):
                 image, steering_cmd = augment_data(image, steering_cmd)
                 
                 #keep no steering angles at first, then start increasingly using them to train 
-                keep_prob = 0.5*(1- m)
-                m = m*0.9999653432415313 # 0.5^(1/20000)=0.9999653432415313 (halves every 20000 images)
+                # keep_prob = 0.5*(1- m)
+                # m = m*0.9993070929904525 # 0.5^(1/10000)=0.9999653432415313 (halves every 10000 images)
+                keep_prob = 1
                 small_steering_lim = 0.1
                 if abs(steering_cmd)>small_steering_lim or np.random.uniform()<keep_prob:
                     still_searching = False
@@ -185,7 +186,7 @@ print('Model Compiled...\n')
 # Train
 #########
 print('Training...')
-nb_epoch = 4
+nb_epoch = 1
 samples_per_epoch = 20000
 
 training_gen = my_train_datagen(csv_data,val_idx, batch_size = 128)
@@ -194,7 +195,10 @@ history = model.fit_generator(training_gen,
                     samples_per_epoch=samples_per_epoch, nb_epoch=nb_epoch,
                     verbose=1, validation_data = validation_gen, nb_val_samples=nb_val_samples)
 
-
+def train(nb_epoch):
+    history = model.fit_generator(training_gen, 
+                    samples_per_epoch=samples_per_epoch, nb_epoch=nb_epoch,
+                    verbose=1, validation_data = validation_gen, nb_val_samples=nb_val_samples)
 
 ##############
 # Save to Disc
