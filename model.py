@@ -6,6 +6,9 @@ import numpy as np
 import data_augmentation as da
 import pandas as pd 
 import cv2
+from random import shuffle
+import pdb
+import tensorflow as tf
 csv_data = pd.read_csv('./driving_log.csv')
 input_shape = (160,320,3)
 
@@ -24,13 +27,13 @@ val_idx = tuple(val_idx)
 def grab_data(csv_data, index, camera):
     shift_val = 0.15
     if camera == 0: #left camera
-        image= img_to_array(load_img(csv_data['left'][index].lstrip()))
+        image= cv2.imread(csv_data['left'][index].lstrip())
         steering_cmd = csv_data['steering'][index] + shift_val# shift to simulate this as the center camera
     elif camera == 1: #center camera
-        image= img_to_array(load_img(csv_data['center'][index].lstrip()))
+        image= cv2.imread(csv_data['center'][index].lstrip())
         steering_cmd = csv_data['steering'][index]
     elif camera == 2: #right camera
-        image= img_to_array(load_img(csv_data['right'][index].lstrip()))
+        image= cv2.imread(csv_data['right'][index].lstrip())
         steering_cmd = csv_data['steering'][index] - shift_val # shift to simulate this as the center camer
     
     return image,steering_cmd
@@ -41,7 +44,7 @@ def augment_data(image, steering_cmd):
     # randomly change brightness, randomly add shadows)
     
     image, AugImg_Values = da.augment_image(image, shear_range = (0,0), rot_range =(0,0),
-                                            vflip_prob = 1, hflip_prob = 0, add_shadow = False,
+                                            vflip_prob = 1, hflip_prob = 0, add_shadow = False, shadow_intensity = 0.9,
                                             trans_range = (20,50), brightness_range = (0.25,1.25), return_rand_param = True)
     # now augment steering_cmd based on how image was augmented
     steering_per_pixel = 0.0015
@@ -52,29 +55,54 @@ def augment_data(image, steering_cmd):
     
     return image, steering_cmd
 
+
+
+def pick_random_image_idx(csv_data):
+    ND_Frames = 8036
+    ND_images = ND_Frames*3
+    n_images = len(csv_data) + 2*ND_Frames # add 2*ND_Frames for left and right images of ND dataset
+
+    n = n_images # make sure I look at all images
+    # n = ND_images # only look at ND data
+
+    idxs = [i for i in range(n)] # make sure I look at all indexes
+    while True:
+        shuffle(idxs)
+        yy = 0
+        while yy < n:
+            random_index = idxs[yy]
+            if random_index<ND_Frames*3:
+                row = random_index//3
+                camera = random_index%3
+            else:
+                row = random_index - ND_images
+                camera = 1 #always center camera for new data
+            yy+=1
+            yield row, camera
+
+
+
 def my_train_datagen(csv_data,val_idxs, batch_size = 128):
     batch_X = np.zeros((batch_size,) + input_shape)
     batch_y = np.zeros(batch_size)
-    m = 1
+    random_idx_gen = pick_random_image_idx(csv_data) #
+    m = 1 # number of images selected
     while True:
         for i in range(batch_size):
             still_searching = True 
             while still_searching:
                 #randomize which image is used, but not from validation set
-                random_index = np.random.randint(len(csv_data))
-                while val_idxs.__contains__(random_index):
-                    random_index = np.random.randint(len(csv_data))
-                #random_index = 57
-                #randomize which camera to use
-                random_camera = np.random.randint(3)
-                #random_camera = 1
+                while True:
+                    (row, camera) = next(random_idx_gen)
+                    if not val_idxs.__contains__(row):
+                        break
 
-                image, steering_cmd = grab_data(csv_data,random_index,random_camera)
+                image, steering_cmd = grab_data(csv_data,row,camera)
                 image, steering_cmd = augment_data(image, steering_cmd)
                 
                 #keep 0 low steering angles at first, then start increasingly using them to train 
-                keep_prob = 0.5*(1- m)
-                m = m*0.9993070929904525 # 0.5^(1/10000)=0.9999653432415313 (halves every 10000 images)
+                keep_prob = 0.5*(1 - m)
+                m = m*0.5**(1/10000) # 0.5^(1/10000)=(halves every 10000 images)
                 small_steering_lim = 0.05
                 if abs(steering_cmd)>small_steering_lim or np.random.uniform()<keep_prob:
                     still_searching = False
@@ -109,8 +137,7 @@ from keras.utils import np_utils
 from keras.optimizers import Adam
 
 #Define convolutional layer
-# dropout = 0.5# percent that will dropout
-
+# dropout = 0# percent that will dropout
 
 model = Sequential()
 model.add(Lambda( lambda x: x/255.0-0.5, input_shape=input_shape))
@@ -167,8 +194,6 @@ Adamoptimizer = Adam(lr=0.0005)
 model.compile(loss='mean_squared_error', optimizer=Adamoptimizer)
 model.summary()
 
-
-
 # conv_model = model
 # model = Sequential()
 # # model.add(Lambda( lambda x: x/255.0-0.5, input_shape=input_shape))
@@ -184,30 +209,30 @@ print('Model Compiled...\n')
 ##########
 # Train
 #########
-print('Training...')
+
 nb_epoch = 4
 samples_per_epoch = 20000
 
 training_gen = my_train_datagen(csv_data,val_idx, batch_size = 128)
 validation_gen = my_validation_datagen(csv_data,val_idx, batch_size = 128)
-history = model.fit_generator(training_gen, 
-                    samples_per_epoch=samples_per_epoch, nb_epoch=nb_epoch,
-                    verbose=1, validation_data = validation_gen, nb_val_samples=nb_val_samples)
 
-def train(nb_epoch):
+
+def train(nb_epoch, samples_per_epoch, load_data = False):
+    print('Training...')
+    if load_data:
+        model.load_weights("model.h5")
     history = model.fit_generator(training_gen, 
-                    samples_per_epoch=samples_per_epoch, nb_epoch=nb_epoch,
-                    verbose=1, validation_data = validation_gen, nb_val_samples=nb_val_samples)
-
-##############
-# Save to Disc
-##############
-# serialize model to JSON
-model_json = model.to_json()
-with open("model.json", "w") as json_file:
-    json_file.write(model_json)
-# serialize weights to HDF5
-model.save_weights("model.h5")
-print("Saved model to disk")
+                samples_per_epoch=samples_per_epoch, nb_epoch=nb_epoch,
+                verbose=1, validation_data = validation_gen, nb_val_samples=nb_val_samples)
+    ##############
+    # Save to Disc
+    ##############
+    # serialize model to JSON
+    model_json = model.to_json()
+    with open("model.json", "w") as json_file:
+        json_file.write(model_json)
+    # serialize weights to HDF5
+    model.save_weights("model.h5")
+    print("Saved model to disk")
 
 

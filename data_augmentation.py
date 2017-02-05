@@ -65,7 +65,7 @@ def trans_image(image, trans_range, return_rand_param = False):
 	else:
 		return image_tr
 
-def add_random_shadow(image):
+def add_random_shadow(image, shadow_intensity = 0.5):
 	'''
 	Description: adds a random shadow to the image
 	inputs:
@@ -79,27 +79,27 @@ def add_random_shadow(image):
 	top_x = 0
 	bot_x = shp[0]
 	bot_y = shp[1]*np.random.uniform()
-	image_hls = cv2.cvtColor(image,cv2.COLOR_RGB2HLS)
-	shadow_mask = 0*image_hls[:,:,1]
+	image_hsv = cv2.cvtColor(image,cv2.COLOR_RGB2HSV)
+	shadow_mask = 0*image_hsv[:,:,1]
 	X_m = np.mgrid[0:image.shape[0],0:image.shape[1]][0]
 	Y_m = np.mgrid[0:image.shape[0],0:image.shape[1]][1]
 	shadow_mask[((X_m-top_x)*(bot_y-top_y) -(bot_x - top_x)*(Y_m-top_y) >=0)]=1
 	#random_bright = .25+.7*np.random.uniform()
 	if np.random.randint(2)==1:
-		random_bright = .5 # maybe make this brightness parameterized
+		random_bright = shadow_intensity # maybe make this brightness parameterized
 		cond1 = shadow_mask==1
 		cond0 = shadow_mask==0
 		if np.random.randint(2)==1:
-			image_hls[:,:,1][cond1] = image_hls[:,:,1][cond1]*random_bright
+			image_hsv[:,:,2][cond1] = image_hsv[:,:,2][cond1]*random_bright
 		else:
-			image_hls[:,:,1][cond0] = image_hls[:,:,1][cond0]*random_bright    
-	image = cv2.cvtColor(image_hls,cv2.COLOR_HLS2RGB)
+			image_hsv[:,:,2][cond0] = image_hsv[:,:,2][cond0]*random_bright    
+	image = cv2.cvtColor(image_hsv,cv2.COLOR_HSV2RGB)
 	return image
 
 
 def hflip(img,probability=0.5, return_rand_param = False):
 	'''
-	Description: Flips the image horizontally with a given probability
+	Description: Flips the image about horizontal axis with a given probability
 	inputs:
 	- img: Image in the form of a numpy array in (row, column) format
 	- probability: The probability that the image will be flipped horizontally (0 to 1)
@@ -119,7 +119,7 @@ def hflip(img,probability=0.5, return_rand_param = False):
 
 def vflip(img,probability=0.5, return_rand_param = False):
 	'''
-	Description: Flips the image vertically with a given probability
+	Description: Flips the image about vertical axis with a given probability
 	inputs:
 	- img: Image in the form of a numpy array in (row, column) format
 	- probability: The probability that the image will be flipped vertically (0 to 1)
@@ -182,21 +182,20 @@ def shear_image(image, shear_range = (-10,10),return_rand_param = False):
 
 
 def augment_image(image, shear_range = (0,0), rot_range =(0,0),
-				vflip_prob = 0, hflip_prob = 0, add_shadow = False,
+				vflip_prob = 0, hflip_prob = 0, add_shadow = False, shadow_intensity = 0.5,
 				trans_range = (0,0), brightness_range = (1,1), return_rand_param = False):
 	
 
 	AugImg_Values = AugImg_Vals()
-	
-	image, AugImg_Values.vflipped = vflip(image,probability=vflip_prob, return_rand_param = True)
-	image, AugImg_Values.hflipped = hflip(image,probability=hflip_prob, return_rand_param = True)
 	image, AugImg_Values.brightness_scale = augment_image_brightness(image, brightness_range = brightness_range, return_rand_param = True)
 	image, AugImg_Values.shear_angles= shear_image(image, shear_range = shear_range,return_rand_param = True)
 	image, AugImg_Values.rotation_angle= rotate_image(image, rot_range=rot_range,return_rand_param = True)
 	image, AugImg_Values.translation_pixels = trans_image(image, trans_range, return_rand_param = True)
+	image, AugImg_Values.vflipped = vflip(image,probability=vflip_prob, return_rand_param = True)
+	image, AugImg_Values.hflipped = hflip(image,probability=hflip_prob, return_rand_param = True)
 
 	if add_shadow:
-		image = add_random_shadow(image)
+		image = add_random_shadow(image, shadow_intensity=shadow_intensity)
 		AugImg_Values.added_shadow = True
 
 	if return_rand_param:
