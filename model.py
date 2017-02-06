@@ -27,14 +27,14 @@ val_idx = tuple(val_idx)
 def grab_data(csv_data, index, camera):
     shift_val = 0.25
     if camera == 0: #left camera
-        image= cv2.imread(csv_data['left'][index].lstrip())
+        image= img_to_array(load_img(csv_data['left'][index].lstrip()))
         steering_cmd = csv_data['steering'][index] + shift_val# shift to simulate this as the center camera
     elif camera == 1: #center camera
-        image= cv2.imread(csv_data['center'][index].lstrip())
+        image= img_to_array(load_img(csv_data['center'][index].lstrip()))
         steering_cmd = csv_data['steering'][index]
     elif camera == 2: #right camera
-        image= cv2.imread(csv_data['right'][index].lstrip())
-        steering_cmd = csv_data['steering'][index] - shift_val # shift to simulate this as the center camer
+        image= img_to_array(load_img(csv_data['right'][index].lstrip()))
+        steering_cmd = csv_data['steering'][index] - shift_val # shift to simulate this as the center camera
     
     return image,steering_cmd
 
@@ -150,7 +150,7 @@ from keras.utils import np_utils
 from keras.optimizers import Adam
 
 #Define convolutional layer
-dropout = 0.5# percent that will dropout
+dropout = 0.2# percent that will dropout
 
 model = Sequential()
 model.add(Lambda( lambda x: x/255.0-0.5, input_shape=input_shape))
