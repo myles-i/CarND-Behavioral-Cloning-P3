@@ -3,14 +3,14 @@
 ##################
 from keras.preprocessing.image import array_to_img, img_to_array, load_img
 import numpy as np
-import data_augmentation as da
+exec(open("./data_augmentation.py").read())
 import pandas as pd 
 import cv2
 from random import shuffle
 import pdb
 import tensorflow as tf
 csv_data = pd.read_csv('./driving_log.csv')
-input_shape = (160,320,3)
+input_shape = (66,200,3)#size for nvidia model
 
 
 ##################
@@ -25,7 +25,7 @@ val_idx = tuple(val_idx)
 # Define data generators and processors
 #######################
 def grab_data(csv_data, index, camera):
-    shift_val = 0.15
+    shift_val = 0.25
     if camera == 0: #left camera
         image= cv2.imread(csv_data['left'][index].lstrip())
         steering_cmd = csv_data['steering'][index] + shift_val# shift to simulate this as the center camera
@@ -43,11 +43,11 @@ def augment_data(image, steering_cmd):
     # augment image (randomly flip about vertical axis, randomly translate image,
     # randomly change brightness, randomly add shadows)
     
-    image, AugImg_Values = da.augment_image(image, shear_range = (0,0), rot_range =(0,0),
-                                            vflip_prob = 1, hflip_prob = 0, add_shadow = False, shadow_intensity = 0.9,
-                                            trans_range = (20,50), brightness_range = (0.25,1.25), return_rand_param = True)
+    image, AugImg_Values = augment_image(image, shear_range = (0,0), rot_range =(0,0),
+                                            vflip_prob = 0.5, hflip_prob = 0, add_shadow = False, shadow_intensity = 0.9,
+                                            trans_range = (20,30), brightness_range = (0.25,1.25), return_rand_param = True)
     # now augment steering_cmd based on how image was augmented
-    steering_per_pixel = 0.0015
+    steering_per_pixel = 0.002
     steering_cmd = steering_cmd + steering_per_pixel*AugImg_Values.translation_pixels[1]
     
     if AugImg_Values.vflipped:
@@ -55,7 +55,15 @@ def augment_data(image, steering_cmd):
     
     return image, steering_cmd
 
+def preprocess_image(image):
+    shape = image.shape
+    # note: numpy arrays are (row, col)!
+    top_cutoff = 30
+    bottom_cutoff = 25
+    image = image[top_cutoff:shape[0]-bottom_cutoff, 0:shape[1]]
 
+    image = cv2.resize(image,(input_shape[1],input_shape[0]),interpolation=cv2.INTER_AREA)
+    return image
 
 def pick_random_image_idx(csv_data):
     ND_Frames = 8036
@@ -71,15 +79,14 @@ def pick_random_image_idx(csv_data):
         yy = 0
         while yy < n:
             random_index = idxs[yy]
-            if random_index<ND_Frames*3:
+            if random_index<ND_images:
                 row = random_index//3
                 camera = random_index%3
             else:
-                row = random_index - ND_images
+                row = random_index - 2*ND_Frames
                 camera = 1 #always center camera for new data
             yy+=1
             yield row, camera
-
 
 
 def my_train_datagen(csv_data,val_idxs, batch_size = 128):
@@ -100,18 +107,19 @@ def my_train_datagen(csv_data,val_idxs, batch_size = 128):
                 image, steering_cmd = grab_data(csv_data,row,camera)
                 image, steering_cmd = augment_data(image, steering_cmd)
                 
-                #keep 0 low steering angles at first, then start increasingly using them to train 
-                keep_prob = 0.5*(1 - m)
+                # #keep 0 low steering angles at first, then start increasingly using them to train 
+                keep_prob = 0.8*(1 - m)
+                # print(keep_prob)
                 m = m*0.5**(1/10000) # 0.5^(1/10000)=(halves every 10000 images)
-                small_steering_lim = 0.05
+                # keep_prob = 0.05
+                small_steering_lim = 0.1
                 if abs(steering_cmd)>small_steering_lim or np.random.uniform()<keep_prob:
                     still_searching = False
 
                 #print(steering_cmd)
-
-
-            batch_X[i] = image
+            batch_X[i] = preprocess_image(image)
             batch_y[i] = steering_cmd
+        # pdb.set_trace()
         yield (batch_X, batch_y)
 
 def my_validation_datagen(csv_data, val_idxs, batch_size = 128): 
@@ -120,12 +128,17 @@ def my_validation_datagen(csv_data, val_idxs, batch_size = 128):
     counter = 0
     while True:
         for i in range(batch_size):
-            counter+=1
+            
             #cycle through validation data
             index = val_idxs[counter%len(val_idxs)]
             camera = 1 #always center camera for validation
 
-            batch_X[i], batch_y[i] = grab_data(csv_data,index,camera)
+            image, steering_cmd = grab_data(csv_data,index,camera)
+
+            batch_X[i] = preprocess_image(image)
+            batch_y[i] = steering_cmd
+            counter+=1
+
         yield (batch_X, batch_y)
 #######################
 # Build network
@@ -137,7 +150,7 @@ from keras.utils import np_utils
 from keras.optimizers import Adam
 
 #Define convolutional layer
-# dropout = 0# percent that will dropout
+dropout = 0.5# percent that will dropout
 
 model = Sequential()
 model.add(Lambda( lambda x: x/255.0-0.5, input_shape=input_shape))
@@ -162,29 +175,30 @@ model.add(Convolution2D(48, 5, 5,
                         border_mode='valid',
                         subsample = (2,2)))
 # model.add(MaxPooling2D(pool_size=pool_size))
-# model.add(Dropout(dropout))
+model.add(Dropout(dropout))
 model.add(Activation('relu'))
 
 ####Convolution Layer 4
 model.add(Convolution2D(64, 3, 3,
                         border_mode='valid',
                         subsample = (1,1)))
-model.add(MaxPooling2D(pool_size=(2,2)))
-# model.add(Dropout(dropout))
+# model.add(MaxPooling2D(pool_size=(2,2)))
+model.add(Dropout(dropout))
 model.add(Activation('relu'))
 
 ####Convolution Layer 5
 model.add(Convolution2D(64, 3, 3,
                         border_mode='valid',
                         subsample = (1,1)))
-model.add(MaxPooling2D(pool_size=(2,2)))
-# model.add(Dropout(dropout))
+# model.add(MaxPooling2D(pool_size=(2,2)))
+model.add(Dropout(dropout))
 model.add(Activation('relu'))
 
 ## Fully Connected Layers
 model.add(Flatten())
 model.add(Dense(100))
 model.add(Activation('relu'))
+model.add(Dropout(dropout))
 model.add(Dense(50))
 model.add(Activation('relu'))
 model.add(Dense(10))
