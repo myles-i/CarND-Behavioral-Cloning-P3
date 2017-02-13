@@ -25,7 +25,7 @@ sio = socketio.Server()
 app = Flask(__name__)
 model = None
 prev_image_array = None
-
+steering_prev = 0.
 @sio.on('telemetry')
 def telemetry(sid, data):
     # The current steering angle of the car

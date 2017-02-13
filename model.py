@@ -4,6 +4,7 @@
 from keras.preprocessing.image import array_to_img, img_to_array, load_img
 import numpy as np
 exec(open("./data_augmentation.py").read())
+import data_augmentation
 import pandas as pd 
 import cv2
 from random import shuffle
@@ -28,10 +29,10 @@ top_cutoff = 30
 bottom_cutoff = 25
 
 # image augmentation parameters
-add_shadow = False
+add_shadow = True
 vflip_prob = 0.5
-shadow_intensity = 0.9
-trans_range = (10,20) # (y,x) transiation ranges
+shadow_intensity = 0.4
+trans_range = (15,30) # (y,x) translation ranges
 brightness_range = (0.25,1.25)
 
 # steering augmentation_parameters
@@ -46,7 +47,7 @@ learning_rate = 0.001
 nb_epoch = 4
 samples_per_epoch = 20000
 batch_size = 128
-dropout = 0.2# percent that will dropout
+dropout = 0.5# percent that will dropout
 
 #######################
 # Define data generators and processors
