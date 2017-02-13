@@ -36,8 +36,8 @@ trans_range = (15,30) # (y,x) translation ranges
 brightness_range = (0.25,1.25)
 
 # steering augmentation_parameters
-steering_per_pixel = 0.002
-camera_shift_val = 0.1 
+steering_per_pixel = 0.003
+camera_shift_val = 0.1
 
 # image shape
 input_shape = (66,200,3)# size for nvidia model
