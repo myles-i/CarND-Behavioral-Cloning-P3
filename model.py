@@ -9,34 +9,75 @@ import cv2
 from random import shuffle
 import pdb
 import tensorflow as tf
-csv_data = pd.read_csv('./driving_log.csv')
-input_shape = (66,200,3)#size for nvidia model
+import matplotlib.pyplot as plt
 
 
 ##################
 # Reserve some data for validation
 ##################
+csv_data = pd.read_csv('./driving_log.csv')
 nb_val_samples = len(csv_data) *0.2 #reserve 20% for validation
 val_idx = np.random.randint(len(csv_data), size = nb_val_samples)
 val_idx = tuple(val_idx)
 
+#######################
+# Parameters
+#######################
+# pre-processing parameters
+top_cutoff = 30
+bottom_cutoff = 25
+
+# image augmentation parameters
+add_shadow = False
+vflip_prob = 0.5
+shadow_intensity = 0.9
+trans_range = (10,20) # (y,x) transiation ranges
+brightness_range = (0.25,1.25)
+
+# steering augmentation_parameters
+steering_per_pixel = 0.002
+camera_shift_val = 0.1 
+
+# image shape
+input_shape = (66,200,3)# size for nvidia model
+
+# training parameters
+learning_rate = 0.001
+nb_epoch = 4
+samples_per_epoch = 20000
+batch_size = 128
+dropout = 0.2# percent that will dropout
 
 #######################
 # Define data generators and processors
 #######################
-def grab_data(csv_data, index, camera):
-    shift_val = 0.25
+
+def grab_steering(csv_data, index, camera):
+    # returns the steering command at the indicated index and camera, shifted for the left and right images
     if camera == 0: #left camera
-        image= img_to_array(load_img(csv_data['left'][index].lstrip()))
-        steering_cmd = csv_data['steering'][index] + shift_val# shift to simulate this as the center camera
+        steering_cmd = csv_data['steering'][index] + camera_shift_val# shift to simulate this as the center camera
     elif camera == 1: #center camera
-        image= img_to_array(load_img(csv_data['center'][index].lstrip()))
         steering_cmd = csv_data['steering'][index]
     elif camera == 2: #right camera
+        steering_cmd = csv_data['steering'][index] - camera_shift_val # shift to simulate this as the center camera
+    return steering_cmd
+
+def grab_image(csv_data, index, camera):
+    # returns the image at the indicated index and camera
+    if camera == 0: #left camera
+        image= img_to_array(load_img(csv_data['left'][index].lstrip()))
+    elif camera == 1: #center camera
+        image= img_to_array(load_img(csv_data['center'][index].lstrip()))
+    elif camera == 2: #right camera
         image= img_to_array(load_img(csv_data['right'][index].lstrip()))
-        steering_cmd = csv_data['steering'][index] - shift_val # shift to simulate this as the center camera
     
-    return image,steering_cmd
+    return image
+
+def grab_data(csv_data, index, camera):
+    # returns a touple with the image and steering command at the input index and camera 
+    return grab_image(csv_data, index, camera), grab_steering(csv_data, index, camera)
+
+
 
 
 def augment_data(image, steering_cmd):
@@ -44,10 +85,9 @@ def augment_data(image, steering_cmd):
     # randomly change brightness, randomly add shadows)
     
     image, AugImg_Values = augment_image(image, shear_range = (0,0), rot_range =(0,0),
-                                            vflip_prob = 0.5, hflip_prob = 0, add_shadow = False, shadow_intensity = 0.9,
-                                            trans_range = (20,30), brightness_range = (0.25,1.25), return_rand_param = True)
+                                            vflip_prob = vflip_prob, hflip_prob = 0, add_shadow = add_shadow, shadow_intensity = shadow_intensity,
+                                            trans_range = trans_range, brightness_range = brightness_range, return_rand_param = True)
     # now augment steering_cmd based on how image was augmented
-    steering_per_pixel = 0.002
     steering_cmd = steering_cmd + steering_per_pixel*AugImg_Values.translation_pixels[1]
     
     if AugImg_Values.vflipped:
@@ -58,71 +98,80 @@ def augment_data(image, steering_cmd):
 def preprocess_image(image):
     shape = image.shape
     # note: numpy arrays are (row, col)!
-    top_cutoff = 30
-    bottom_cutoff = 25
+
     image = image[top_cutoff:shape[0]-bottom_cutoff, 0:shape[1]]
 
     image = cv2.resize(image,(input_shape[1],input_shape[0]),interpolation=cv2.INTER_AREA)
     return image
 
 def pick_random_image_idx(csv_data):
-    ND_Frames = 8036
-    ND_images = ND_Frames*3
-    n_images = len(csv_data) + 2*ND_Frames # add 2*ND_Frames for left and right images of ND dataset
+    # this 
+    ND_Frames = 8036 # number of timeframes in the provided dataset (contains left, center, and right images)
+    ND_images = ND_Frames*3 # total number of images provided dataset
+    n_images = len(csv_data) + 2*ND_Frames # Total number of images (add 2*ND_Frames for left and right images of ND dataset)
 
     n = n_images # make sure I look at all images
     # n = ND_images # only look at ND data
 
-    idxs = [i for i in range(n)] # make sure I look at all indexes
-    while True:
-        shuffle(idxs)
+    idxs = [i for i in range(n)] 
+    while True: #continuously generate random image idx
+        shuffle(idxs) #shuffle the idxs to randomize
         yy = 0
-        while yy < n:
+        while yy < n: # go thorugh all images before shuffling again
             random_index = idxs[yy]
-            if random_index<ND_images:
+            if random_index<ND_images: # random image is in the provided dataset
                 row = random_index//3
                 camera = random_index%3
-            else:
+            else: #random image is in the data that I generated by driving car around track 1
                 row = random_index - 2*ND_Frames
                 camera = 1 #always center camera for new data
             yy+=1
             yield row, camera
+def prob_tuple_keepfun(steering_cmd, prob_tuple = (1,0,[1]) ):
+    # this function computes the probability that an image should be kept given the probability tuble
+    # prob_tuple = (bin_interval, max_n_bin, prob) where prob is an array of probabilities for each bin
+    pt_index = int(min(prob_tuple[1],np.abs(steering_cmd)/prob_tuple[0]))#probability tuple index
+    keep_sample = np.random.uniform()<prob_tuple[2][pt_index]
+    return keep_sample
 
-
-def my_train_datagen(csv_data,val_idxs, batch_size = 128):
+def my_train_datagen(csv_data,val_idxs, batch_size = 128, prob_tuple = (1,0,[1])):
+    # generates training data (images and steering commands) for the training dataset.
+    # This function skips data in the validation dataset (defined by val_idxs) and also
+    # keeps the training data with probabilities defined by prob_tuple which helps 
+    # equalize the dataset to not bias the neural network toward one particular steering
+    # command.
+    # prob_tuple = (bin_interval, max_n_bin, prob) where prob is an array of probabilities for each bin
     batch_X = np.zeros((batch_size,) + input_shape)
     batch_y = np.zeros(batch_size)
     random_idx_gen = pick_random_image_idx(csv_data) #
     m = 1 # number of images selected
-    while True:
+    while True: #generate training data indefinitely 
         for i in range(batch_size):
             still_searching = True 
             while still_searching:
                 #randomize which image is used, but not from validation set
                 while True:
                     (row, camera) = next(random_idx_gen)
+                    # reject training instances in validation set_trace
                     if not val_idxs.__contains__(row):
                         break
 
-                image, steering_cmd = grab_data(csv_data,row,camera)
-                image, steering_cmd = augment_data(image, steering_cmd)
                 
-                # #keep 0 low steering angles at first, then start increasingly using them to train 
-                keep_prob = 0.8*(1 - m)
-                # print(keep_prob)
-                m = m*0.5**(1/10000) # 0.5^(1/10000)=(halves every 10000 images)
-                # keep_prob = 0.05
-                small_steering_lim = 0.1
-                if abs(steering_cmd)>small_steering_lim or np.random.uniform()<keep_prob:
-                    still_searching = False
-
-                #print(steering_cmd)
+                steering_cmd = grab_steering(csv_data,row,camera)
+                # reject training instances below probabilities in prob_tuple for augmented steering_cmd
+                still_searching = not prob_tuple_keepfun(steering_cmd, prob_tuple)
+            steering_cmd = grab_steering(csv_data,row,camera)
+            image  =  grab_image(csv_data,row,camera)
+            image, steering_cmd = augment_data(image, steering_cmd)
             batch_X[i] = preprocess_image(image)
             batch_y[i] = steering_cmd
         # pdb.set_trace()
         yield (batch_X, batch_y)
 
+
 def my_validation_datagen(csv_data, val_idxs, batch_size = 128): 
+    # generator for the validation data set. Only ouptuts images from 
+    # the center camera from teh set of image indices defined by val_idxs.
     batch_X = np.zeros((batch_size,) + input_shape)
     batch_y = np.zeros(batch_size)
     counter = 0
@@ -140,6 +189,46 @@ def my_validation_datagen(csv_data, val_idxs, batch_size = 128):
             counter+=1
 
         yield (batch_X, batch_y)
+
+#######################
+# Compute distribution of steering with datagen
+######################
+def estimate_prob_tuple(n=10000, bins = 20):
+    # This function estimates what the steering command would be for "n"
+    # generated images and estimates the probability distribution in 
+    # "bins" number of bins. The goal is to randomly keep a steering angle
+    # with a probability inversely proportional to its likelihood in the generated
+    # image data set to equalize the number of images fed to the neural network
+    # prob_tuple = (bin_interval, max_n_bin, prob) where prob is an array of probabilities 
+    # for each range of steering commands defined by the bin
+    random_idx_gen = pick_random_image_idx(csv_data)
+    steering_rand = np.zeros(n)
+    #generate estiamte for "n" steering command training labels
+    for i in range(n):
+        row, camera = next(random_idx_gen)
+        steering_cmd = grab_steering(csv_data, row, camera)
+        # emulate data augmentation
+        tr_x = np.random.randint(-trans_range[1],trans_range[1]+1)
+        steering_cmd = steering_cmd + steering_per_pixel*tr_x
+        flip_image = np.random.uniform()<vflip_prob
+        if flip_image:
+            steering_cmd = -steering_cmd
+        steering_rand[i] = steering_cmd
+
+    #estimate keep probability for bin'ed data to equalize training occurance of each label
+    (bins_n, bin_edges) = np.histogram(abs(steering_rand),bins) 
+    bins_n = bins_n+500 #add constant to smooth over and avoid divide by zero
+    bins_n_normalized = bins_n/sum(bins_n)
+    bins_n_keep_ratio = 1/bins_n_normalized
+    bins_n_keep_prob  = bins_n_keep_ratio/max(bins_n_keep_ratio)
+    plt.figure; plt.plot(bin_edges[0:-1],bins_n_keep_prob); plt.show(block = False)
+
+    bin_width = bin_edges[1] - bin_edges[0]
+    prob_tuple = (bin_width, bins-1, bins_n_keep_prob)
+    return prob_tuple
+
+
+
 #######################
 # Build network
 #######################
@@ -149,32 +238,27 @@ from keras.layers import Convolution2D, MaxPooling2D
 from keras.utils import np_utils
 from keras.optimizers import Adam
 
-#Define convolutional layer
-dropout = 0.2# percent that will dropout
 
 model = Sequential()
-model.add(Lambda( lambda x: x/255.0-0.5, input_shape=input_shape))
+#normalize
+model.add(Lambda( lambda x: x/255.0-0.5, input_shape = input_shape))
+
 ####Convolution Layer 
 model.add(Convolution2D(24, 5, 5,
-						subsample = (2,2),
+                        subsample = (2,2),
                         border_mode='valid'))
-#model.add(MaxPooling2D(pool_size=pool_size))
-# model.add(Dropout(dropout))
 model.add(Activation('relu'))
 
 ####Convolution Layer 2
 model.add(Convolution2D(36, 5, 5,
                         border_mode='valid',
                         subsample = (2,2)))
-# model.add(MaxPooling2D(pool_size=pool_size))
-# model.add(Dropout(dropout))
 model.add(Activation('relu'))
 
 ####Convolution Layer 3
 model.add(Convolution2D(48, 5, 5,
                         border_mode='valid',
                         subsample = (2,2)))
-# model.add(MaxPooling2D(pool_size=pool_size))
 model.add(Dropout(dropout))
 model.add(Activation('relu'))
 
@@ -182,7 +266,6 @@ model.add(Activation('relu'))
 model.add(Convolution2D(64, 3, 3,
                         border_mode='valid',
                         subsample = (1,1)))
-# model.add(MaxPooling2D(pool_size=(2,2)))
 model.add(Dropout(dropout))
 model.add(Activation('relu'))
 
@@ -190,7 +273,6 @@ model.add(Activation('relu'))
 model.add(Convolution2D(64, 3, 3,
                         border_mode='valid',
                         subsample = (1,1)))
-# model.add(MaxPooling2D(pool_size=(2,2)))
 model.add(Dropout(dropout))
 model.add(Activation('relu'))
 
@@ -204,31 +286,22 @@ model.add(Activation('relu'))
 model.add(Dense(10))
 model.add(Activation('relu'))
 model.add(Dense(1))
-Adamoptimizer = Adam(lr=0.0005)
+Adamoptimizer = Adam(lr=learning_rate)
 model.compile(loss='mean_squared_error', optimizer=Adamoptimizer)
 model.summary()
-
-# conv_model = model
-# model = Sequential()
-# # model.add(Lambda( lambda x: x/255.0-0.5, input_shape=input_shape))
-# model.add(Flatten(input_shape=input_shape))
-# model.add(Dense(128))
-# model.add(Activation('relu'))
-# model.add(Dense(128))
-# model.add(Activation('relu'))
-# model.add(Dense(1))
-# model.compile(loss='mean_squared_error', optimizer='Adam', )
 
 print('Model Compiled...\n')
 ##########
 # Train
 #########
+def gen_equalized_train_gen(csv_data,val_idx, batch_size = 128, n=10000, bins = 20):
+    prob_tuple = estimate_prob_tuple(n, bins)
+    return my_train_datagen(csv_data,val_idx, batch_size = batch_size, prob_tuple = prob_tuple)
 
-nb_epoch = 4
-samples_per_epoch = 20000
+# training_gen = my_train_datagen(csv_data,val_idx, batch_size = batch_size)
+training_gen = gen_equalized_train_gen(csv_data,val_idx,batch_size = 128, n=10000, bins = 10)
+validation_gen = my_validation_datagen(csv_data,val_idx, batch_size = batch_size)
 
-training_gen = my_train_datagen(csv_data,val_idx, batch_size = 128)
-validation_gen = my_validation_datagen(csv_data,val_idx, batch_size = 128)
 
 
 def train(nb_epoch, samples_per_epoch, load_data = False):
