@@ -194,7 +194,7 @@ def my_validation_datagen(csv_data, val_idxs, batch_size = 128):
 #######################
 # Compute distribution of steering with datagen
 ######################
-def estimate_prob_tuple(n=10000, bins = 20):
+def estimate_prob_tuple(n=10000, bins = 20, plot_img = False):
     # This function estimates what the steering command would be for "n"
     # generated images and estimates the probability distribution in 
     # "bins" number of bins. The goal is to randomly keep a steering angle
@@ -222,8 +222,9 @@ def estimate_prob_tuple(n=10000, bins = 20):
     bins_n_normalized = bins_n/sum(bins_n)
     bins_n_keep_ratio = 1/bins_n_normalized
     bins_n_keep_prob  = bins_n_keep_ratio/max(bins_n_keep_ratio)
-    plt.figure; plt.plot(bin_edges[0:-1],bins_n_keep_prob); plt.show(block = False)
-
+    if plot_img:
+        plt.figure; plt.plot(bin_edges[0:-1],bins_n_keep_prob); plt.show(block = False)
+    
     bin_width = bin_edges[1] - bin_edges[0]
     prob_tuple = (bin_width, bins-1, bins_n_keep_prob)
     return prob_tuple
@@ -289,7 +290,7 @@ model.add(Activation('relu'))
 model.add(Dense(1))
 Adamoptimizer = Adam(lr=learning_rate)
 model.compile(loss='mean_squared_error', optimizer=Adamoptimizer)
-model.summary()
+# model.summary()
 
 print('Model Compiled...\n')
 ##########
